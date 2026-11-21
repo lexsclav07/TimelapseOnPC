@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=StudyLapse
+Comment=Webcam and screen timelapses of your study sessions
+Exec=@ROOT@/scripts/run-linux.sh
+Icon=studylapse
+Terminal=false
+Categories=Utility;Education;Video;
+StartupWMClass=studylapse
