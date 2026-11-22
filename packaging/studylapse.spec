@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files
+
 root = Path(SPECPATH).parent
 icon = None
 if sys.platform == "win32" and (root / "packaging" / "studylapse.ico").exists():
@@ -11,7 +13,8 @@ if sys.platform == "win32" and (root / "packaging" / "studylapse.ico").exists():
 a = Analysis(
     [str(root / "packaging" / "launcher.py")],
     pathex=[str(root)],
-    hiddenimports=["studylapse.ui.main_window"],
+    hiddenimports=["studylapse.ui.main_window", "imageio_ffmpeg"],
+    datas=collect_data_files("imageio_ffmpeg", includes=["binaries/*"]),  # bundled H.264 ffmpeg
     excludes=["tkinter", "matplotlib", "PySide6.QtWebEngineCore", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtPdf"],
 )
 # Drop Qt translations and plugins we never load (saves ~20 MB).

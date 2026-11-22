@@ -234,6 +234,14 @@ class SettingsDialog(QDialog):
         qw.setEnabled(not recording)
         lay.addWidget(row("JPEG quality", qw))
 
+        self.auto_switch = Switch("Make the MP4 automatically when I stop")
+        self.auto_switch.setChecked(settings.auto_export)
+        self.auto_switch.toggled.connect(lambda v: self._set("auto_export", v))
+        lay.addWidget(self.auto_switch)
+        lay.addWidget(
+            _hint("Uses the layout and speed you last picked in Export. Runs at low priority in the background.")
+        )
+
         # ---------------------------------------------------------- app
         lay.addWidget(_section("App"))
         self.tray_switch = Switch("Hide to system tray while recording")

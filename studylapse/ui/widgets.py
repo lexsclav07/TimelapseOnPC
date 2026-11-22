@@ -366,13 +366,22 @@ class Toast(QFrame):
         lay.addWidget(self.btn)
         lay.addWidget(close)
         self._timer = QTimer(self, singleShot=True, timeout=self.hide)
+        self._cb = None
         self.hide()
 
     def _act(self):
         self.hide()
-        self.action.emit()
+        cb, self._cb = self._cb, None
+        if cb is not None:
+            cb()
+        else:
+            self.action.emit()
 
-    def show_message(self, text: str, action: str | None = None, ms: int = 6000):
+    def set_text(self, text: str):
+        self.label.setText(text)
+
+    def show_message(self, text: str, action: str | None = None, ms: int = 6000, callback=None):
+        self._cb = callback
         self.label.setText(text)
         self.btn.setVisible(bool(action))
         self.btn.setText(action or "")

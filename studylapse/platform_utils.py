@@ -105,6 +105,20 @@ def open_folder(path: Path) -> None:
         pass
 
 
+def open_file(path: Path) -> None:
+    """Open a file with the default app (e.g. play an MP4 in the system video player)."""
+    path = Path(path)
+    try:
+        if IS_WINDOWS:
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif IS_MAC:
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+    except OSError:
+        pass
+
+
 def is_wayland() -> bool:
     return IS_LINUX and (
         os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"

@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
 
 from ..camera import LockState
 from ..config import INTERVAL_STEPS, Settings, format_duration, format_interval
-from ..platform_utils import IS_WINDOWS, is_wayland, open_folder
+from ..exporter import Exporter, SessionInfo, available_layouts
+from ..platform_utils import IS_WINDOWS, is_wayland, open_file, open_folder
 from ..recorder import PreviewThread, Recorder
 from .export_dialog import ExportDialog
 from .icons import app_icon, icon
@@ -46,6 +47,7 @@ class MainWindow(QMainWindow):
         self._quitting = False
         self._tray_hint_shown = False
         self._last_session: str | None = None
+        self.auto_exporter: Exporter | None = None
 
         self.setWindowTitle("StudyLapse")
         self.setWindowIcon(app_icon())
@@ -199,7 +201,6 @@ class MainWindow(QMainWindow):
             w.setFocusPolicy(Qt.NoFocus)
 
         self.toast = Toast(root)
-        self.toast.action.connect(lambda: self._open_export(self._last_session))
 
     def _build_tray(self):
         self.tray = None
@@ -492,9 +493,65 @@ class MainWindow(QMainWindow):
             return
         if frames > 0:
             self._last_session = session_dir
-            self.toast.show_message(f"Saved {frames:,} frames.", "Export", ms=10000)
+            if self.s.auto_export:
+                self._auto_export(session_dir)
+            else:
+                self.toast.show_message(
+                    f"Saved {frames:,} frames.", "Export", ms=10000,
+                    callback=lambda: self._open_export(session_dir),
+                )
         else:
             self.toast.show_message("Nothing was captured in that session.")
+
+    # ------------------------------------------------------------ auto export
+    def _auto_export(self, session_dir: str):
+        """Make the MP4 straight away (low priority) so it's ready to watch."""
+        info = SessionInfo.load(Path(session_dir))
+        layouts = available_layouts(info) if info and info.frames else []
+        if not layouts:
+            return
+        layout = self.s.export_layout if self.s.export_layout in layouts else layouts[0]
+        if self.auto_exporter is not None:
+            self.auto_exporter.cancel()
+            self.auto_exporter.wait(5000)
+        ex = Exporter(info, layout, self.s.export_fps or 30, self.s.export_height, self.s.export_timer, self)
+        self.auto_exporter = ex
+        self.toast.show_message("Making your MP4…", ms=600000)
+
+        def progress(n: int, total: int):
+            if self.toast.isVisible():
+                self.toast.set_text(f"Making your MP4…  {100 * n // max(total, 1)}%")
+
+        def done(path: str):
+            secs = len(info.frames) / (self.s.export_fps or 30)
+            self.toast.show_message(
+                f"Video ready  ·  {secs:.1f} s", "Play", ms=20000, callback=lambda: open_file(Path(path))
+            )
+            if self.tray is not None and not self.isVisible():
+                self.tray.showMessage("StudyLapse", "Your timelapse MP4 is ready.", app_icon(), 4000)
+
+        def failed(msg: str):
+            if msg != "Export cancelled.":
+                self.toast.show_message(
+                    f"Couldn't make the MP4: {msg}", "Export…", ms=15000,
+                    callback=lambda: self._open_export(session_dir),
+                )
+
+        def finished():
+            if self.auto_exporter is ex:
+                self.auto_exporter = None
+
+        ex.progress.connect(progress)
+        ex.done.connect(done)
+        ex.failed.connect(failed)
+        ex.finished.connect(finished)
+        ex.start()
+
+    def _cancel_auto_export(self):
+        if self.auto_exporter is not None:
+            self.auto_exporter.cancel()
+            self.auto_exporter.wait(5000)
+            self.auto_exporter = None
 
     # ------------------------------------------------------------ dialogs
     def _open_settings(self):
@@ -564,6 +621,8 @@ class MainWindow(QMainWindow):
             self.toast.show_message("Stop recording before exporting.")
             return
         self._stop_preview()
+        if self.auto_exporter is not None and not isinstance(preselect, str):
+            preselect = self._last_session
         dlg = ExportDialog(self.s, preselect if isinstance(preselect, str) else None, self)
         dlg.exec()
 
@@ -646,6 +705,7 @@ class MainWindow(QMainWindow):
             e.ignore()
             return
         self._stop_preview(wait=True)
+        self._cancel_auto_export()
         self.s.save()
         e.accept()
         QApplication.quit()
@@ -653,6 +713,7 @@ class MainWindow(QMainWindow):
     def _quit(self):
         self._quitting = True
         self._stop_preview(wait=True)
+        self._cancel_auto_export()
         self.s.save()
         if self.recorder is not None:
             self.recorder.stop()  # _on_stopped will quit once files are flushed

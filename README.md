@@ -1,9 +1,9 @@
 # StudyLapse
 
 A small, light desktop app for **study timelapses**. It sits in the background while you work and saves a
-webcam photo and/or a screenshot at whatever interval you choose. When you're done it turns the session into
-an MP4: screen with a webcam corner, side by side, vertical for your phone, or one source only, with an
-optional study-timer overlay.
+webcam photo and/or a screenshot at whatever interval you choose. When you press stop it **automatically makes
+an MP4** you can play straight away: screen with a webcam corner, side by side, vertical for your phone, or one
+source only, with an optional study-timer overlay.
 
 Runs on **Windows 10/11** and **Linux** (X11 and Wayland, including Fedora GNOME/KDE).
 
@@ -21,7 +21,11 @@ Runs on **Windows 10/11** and **Linux** (X11 and Wayland, including Fedora GNOME
 - **No audio**: the microphone is never opened.
 - Pause/resume without starting a new session. Paused time isn't counted on the study timer.
 - Sits in the system tray while recording, so closing the window doesn't stop it.
-- Export to MP4 at 24/30/60 fps in 720p to 4K. It uses H.264 when `ffmpeg` is installed and falls back to MPEG-4 if not.
+- **MP4 that plays anywhere.** Exports are H.264 / yuv420p with fast-start, which plays in Windows Media Player,
+  the Fedora video player, VLC, phones, browsers, Discord and video editors. An ffmpeg build is included through
+  `imageio-ffmpeg`, so there's nothing extra to install.
+- **Auto-export.** When you stop a session the MP4 is made in the background, and a **Play** button pops up when
+  it's ready. You can also re-export any session at 24/30/60 fps in 720p to 4K, in any layout.
 
 ### Why it's light
 
@@ -38,8 +42,8 @@ Measured on Linux recording a 1440p screen every 10 s: **under 1% of one CPU cor
 
 ## Install & run
 
-You need Python 3.10 or newer. For the best exports, install **ffmpeg**:
-Fedora `sudo dnf install ffmpeg-free`, Windows `winget install ffmpeg`.
+You need Python 3.10 or newer. Everything else, including the ffmpeg used for MP4 export, is installed
+automatically on first run.
 
 ### Linux
 
@@ -70,7 +74,9 @@ pyinstaller packaging/studylapse.spec      # -> dist/StudyLapse/StudyLapse.exe
 2. Tap the **eye** on the preview to see a live webcam view while you set up the shot.
 3. Press the **red button** (or <kbd>Space</kbd>). The webcam calibrates and locks, then recording starts.
    The same button pauses and resumes. **■** stops and saves.
-4. Click **Export video** (<kbd>Ctrl</kbd>+<kbd>E</kbd>) and pick the session, layout and fps.
+4. Your MP4 is made automatically. Click **Play** on the pop-up to watch it.
+   To make a different version (another layout, fps or resolution), click **Export video**
+   (<kbd>Ctrl</kbd>+<kbd>E</kbd>). Turn auto-export off in Settings if you'd rather only export by hand.
 
 Settings (<kbd>Ctrl</kbd>+<kbd>,</kbd>) has the camera device and resolution, lock and brightness, whether the
 webcam stays on between shots, which monitor to capture and at what resolution, the cursor option, the output
@@ -98,7 +104,7 @@ If you'd rather set everything by hand there, turn the auto-lock off.
   screen/000001.jpg ...
   frames.csv          # index, timestamp, study-seconds, which sources captured
   session.json        # interval, locked camera values, capture method
-  timelapse_pip.mp4   # created by Export
+  timelapse_pip.mp4   # the video (named after its layout)
 ```
 
 Frames are plain JPEGs, so you can also put them into any video editor.

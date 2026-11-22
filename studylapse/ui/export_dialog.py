@@ -16,8 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import Settings, format_duration
-from ..exporter import LAYOUTS, Exporter, find_ffmpeg, find_sessions
-from ..platform_utils import open_folder
+from ..exporter import LAYOUTS, Exporter, available_layouts, encoder_description, find_sessions, output_path
+from ..platform_utils import open_file, open_folder
 from .widgets import Switch
 
 
@@ -92,6 +92,11 @@ class ExportDialog(QDialog):
         self.open_btn = QPushButton("Show in folder")
         self.open_btn.hide()
         self.open_btn.clicked.connect(self._open)
+        self.play_btn = QPushButton("▶  Play")
+        self.play_btn.setObjectName("Primary")
+        self.play_btn.setToolTip("Open the MP4 in your video player")
+        self.play_btn.hide()
+        self.play_btn.clicked.connect(self._play)
         self.close_btn = QPushButton("Close")
         self.close_btn.clicked.connect(self._close_or_cancel)
         self.go_btn = QPushButton("Export")
@@ -102,10 +107,13 @@ class ExportDialog(QDialog):
         btns.addStretch(1)
         btns.addWidget(self.close_btn)
         btns.addWidget(self.go_btn)
+        btns.addWidget(self.play_btn)
         lay.addLayout(btns)
 
         self.session_combo.currentIndexChanged.connect(self._session_changed)
         self.layout_combo.currentIndexChanged.connect(self._update_info)
+        self.h_combo.currentIndexChanged.connect(self._update_info)
+        self.timer_switch.toggled.connect(self._update_info)
         self.fps_combo.currentIndexChanged.connect(self._update_info)
         self._session_changed()
         if not self.sessions:
@@ -122,16 +130,8 @@ class ExportDialog(QDialog):
         self.layout_combo.blockSignals(True)
         self.layout_combo.clear()
         if info:
-            for key, label in LAYOUTS.items():
-                needs_cam = key in ("webcam", "pip", "side", "vertical")
-                needs_scr = key in ("screen", "pip", "side", "vertical")
-                both = key in ("pip", "side", "vertical")
-                ok = (
-                    (both and info.has_webcam and info.has_screen)
-                    or (not both and ((needs_cam and info.has_webcam) or (needs_scr and info.has_screen)))
-                )
-                if ok:
-                    self.layout_combo.addItem(label, key)
+            for key in available_layouts(info):
+                self.layout_combo.addItem(LAYOUTS[key], key)
         i = self.layout_combo.findData(prev)
         self.layout_combo.setCurrentIndex(max(0, i))
         self.layout_combo.blockSignals(False)
@@ -144,11 +144,27 @@ class ExportDialog(QDialog):
         fps = self.fps_combo.currentData() or 30
         n = len(info.frames)
         study = info.frames[-1][1] if info.frames else 0
-        encoder = "H.264 via ffmpeg" if find_ffmpeg() else "MPEG-4 (install ffmpeg for smaller, sharper files)"
         self.info.setText(
             f"{n} frames  ·  {format_duration(study)} of study  →  {n / fps:.1f} s video\n"
-            f"Encoder: {encoder}"
+            f"{encoder_description()}"
         )
+        # Already exported? Offer to play it straight away.
+        layout = self.layout_combo.currentData()
+        existing = output_path(info, layout) if layout else None
+        if self.worker is None:
+            if existing is not None and existing.exists():
+                self.last_output = existing
+                self.go_btn.setText("Export again")
+                self.go_btn.setObjectName("")
+                self.play_btn.show()
+                self.open_btn.show()
+            else:
+                self.go_btn.setText("Export")
+                self.go_btn.setObjectName("Primary")
+                self.play_btn.hide()
+                self.open_btn.hide()
+            self.go_btn.style().unpolish(self.go_btn)
+            self.go_btn.style().polish(self.go_btn)
 
     def _start(self):
         info = self._current()
@@ -169,13 +185,15 @@ class ExportDialog(QDialog):
         self.progress.setValue(0)
         self.progress.show()
         self.open_btn.hide()
+        self.play_btn.hide()
         self._set_inputs(False)
         self.close_btn.setText("Cancel")
         self.info.setText("Exporting… you can keep working, this runs at low priority.")
         self.worker.start()
 
     def _set_inputs(self, on: bool):
-        for w in (self.session_combo, self.layout_combo, self.fps_combo, self.h_combo, self.timer_switch, self.go_btn):
+        for w in (self.session_combo, self.layout_combo, self.fps_combo, self.h_combo, self.timer_switch,
+                  self.go_btn, self.play_btn):
             w.setEnabled(on)
 
     def _progress(self, n: int, total: int):
@@ -187,8 +205,14 @@ class ExportDialog(QDialog):
         self._set_inputs(True)
         self.close_btn.setText("Close")
         self.progress.setValue(self.progress.maximum())
-        self.info.setText(f"Saved  {Path(path).name}")
+        self.info.setText(f"Saved  {Path(path).name}  ·  {Path(path).stat().st_size / 1e6:.1f} MB")
+        self.go_btn.setText("Export again")
+        self.go_btn.setObjectName("")
+        self.go_btn.style().unpolish(self.go_btn)
+        self.go_btn.style().polish(self.go_btn)
         self.open_btn.show()
+        self.play_btn.show()
+        self.play_btn.setFocus()
 
     def _failed(self, msg: str):
         self.worker = None
@@ -196,6 +220,10 @@ class ExportDialog(QDialog):
         self.close_btn.setText("Close")
         self.progress.hide()
         self.info.setText(msg)
+
+    def _play(self):
+        if self.last_output and self.last_output.exists():
+            open_file(self.last_output)
 
     def _open(self):
         if self.last_output:

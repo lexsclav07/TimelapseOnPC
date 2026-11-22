@@ -1,12 +1,17 @@
-"""Turn a session folder into an MP4.
+"""Turn a session folder into an MP4 that plays everywhere.
 
-Uses ffmpeg (H.264, small files) when it is installed, otherwise OpenCV's
-built-in MPEG-4 writer. Runs at low priority in a background thread.
+Encodes H.264 / yuv420p / faststart - the format every phone, browser,
+Windows Media Player, VLC and video editor understands. The ffmpeg binary
+bundled with the ``imageio-ffmpeg`` package is used first (so nothing has to
+be installed separately), then a system ffmpeg, then OpenCV as a last resort.
+Runs at low priority in a background thread.
 """
 
 from __future__ import annotations
 
 import csv
+import functools
+import os
 import shutil
 import subprocess
 import threading
@@ -60,6 +65,26 @@ class SessionInfo:
         except OSError:
             return None
         return cls(path, frames, (path / "webcam").is_dir(), (path / "screen").is_dir())
+
+
+def available_layouts(info: "SessionInfo") -> list[str]:
+    """Layouts that make sense for the sources a session actually recorded."""
+    both = info.has_webcam and info.has_screen
+    out = []
+    for key in LAYOUTS:
+        if key in ("pip", "side", "vertical"):
+            ok = both
+        elif key == "webcam":
+            ok = info.has_webcam
+        else:
+            ok = info.has_screen
+        if ok:
+            out.append(key)
+    return out
+
+
+def output_path(info: "SessionInfo", layout: str) -> Path:
+    return info.path / f"timelapse_{layout}.mp4"
 
 
 def find_sessions(output_dir: Path) -> list[SessionInfo]:
@@ -195,8 +220,48 @@ class Compositor:
         cv2.putText(img, text, (x0 + pad, y1 - pad - base // 2), font, fs, (255, 255, 255), th, cv2.LINE_AA)
 
 
-def find_ffmpeg() -> str | None:
-    return shutil.which("ffmpeg")
+# Preferred H.264 encoders, best quality-per-byte first.
+_H264 = (
+    ("libx264", ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-threads", "2"]),
+    ("libopenh264", ["-c:v", "libopenh264", "-b:v", "8M"]),   # Fedora's ffmpeg-free
+)
+
+
+def _encoders(exe: str) -> str:
+    kwargs = {"creationflags": 0x08000000} if IS_WINDOWS else {}
+    try:
+        return subprocess.run(
+            [exe, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=10, **kwargs
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+@functools.lru_cache(maxsize=1)
+def find_ffmpeg() -> tuple[str, list[str]] | None:
+    """Return (ffmpeg path, H.264 codec args) or None."""
+    candidates = []
+    try:
+        import imageio_ffmpeg
+
+        candidates.append(imageio_ffmpeg.get_ffmpeg_exe())
+    except Exception:
+        pass
+    if shutil.which("ffmpeg"):
+        candidates.append(shutil.which("ffmpeg"))
+    for exe in candidates:
+        listing = _encoders(exe)
+        for name, args in _H264:
+            if f" {name} " in listing:
+                return exe, args
+    return None
+
+
+def encoder_description() -> str:
+    found = find_ffmpeg()
+    if found:
+        return "MP4 (H.264) - plays on any device"
+    return "MP4 (MPEG-4) - install imageio-ffmpeg for wider compatibility"
 
 
 class Exporter(QThread):
@@ -212,7 +277,7 @@ class Exporter(QThread):
         self.height = height
         self.timer = timer
         self._cancel = threading.Event()
-        self.output = session.path / f"timelapse_{layout}.mp4"
+        self.output = output_path(session, layout)
 
     def cancel(self):
         self._cancel.set()
@@ -252,24 +317,28 @@ class Exporter(QThread):
         )
         W, H = comp.size
 
-        ffmpeg = find_ffmpeg()
+        found = find_ffmpeg()
         proc = writer = None
-        tmp_out = self.output.with_suffix(".part.mp4")
-        if ffmpeg:
+        tmp_out = self.output.with_name(f".{self.output.stem}.{os.getpid()}-{id(self):x}.part.mp4")
+        if found:
+            ffmpeg, codec = found
             cmd = [
                 ffmpeg, "-y", "-loglevel", "error",
                 "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}", "-r", str(self.fps), "-i", "-",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart", "-threads", "2", str(tmp_out),
+                *codec, "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(tmp_out),
             ]
             kwargs = {}
             if IS_WINDOWS:
                 kwargs["creationflags"] = 0x08000000 | 0x00004000  # CREATE_NO_WINDOW | BELOW_NORMAL
             else:
-                kwargs["preexec_fn"] = lambda: __import__("os").nice(15)
+                kwargs["preexec_fn"] = lambda: os.nice(15)
             proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
         else:
-            writer = cv2.VideoWriter(str(tmp_out), cv2.VideoWriter_fourcc(*"mp4v"), self.fps, (W, H))
+            # Try H.264 first (works via Media Foundation on Windows), then MPEG-4.
+            for fourcc in ("avc1", "mp4v"):
+                writer = cv2.VideoWriter(str(tmp_out), cv2.VideoWriter_fourcc(*fourcc), self.fps, (W, H))
+                if writer.isOpened():
+                    break
             if not writer.isOpened():
                 self.failed.emit("Could not open a video writer (install ffmpeg for best results).")
                 return

@@ -39,6 +39,7 @@ class Settings:
     minimize_to_tray: bool = True
 
     # Export defaults
+    auto_export: bool = True          # make the MP4 automatically when a session stops
     export_layout: str = "pip"
     export_fps: int = 30
     export_timer: bool = True
